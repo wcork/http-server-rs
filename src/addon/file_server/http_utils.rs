@@ -86,6 +86,9 @@ impl ResponseHeaders {
 
     fn content_length(file: &File, range: Option<(usize, usize)>) -> u64 {
         if let Some((first_byte, last_byte)) = range {
+            if last_byte == u64::MAX as usize {
+                return file.size() - first_byte as u64;
+            }
             last_byte.abs_diff(first_byte) as u64 + 1
         } else {
             file.size()
@@ -132,8 +135,12 @@ pub async fn make_http_file_response(
     let body = file_bytes_into_http_body(file, range).await;
 
     if let Some((first_byte, last_byte)) = range {
+        let mut last_byte_str = format!("{filesize}");
+        if last_byte != u64::MAX as usize {
+            last_byte_str = format!("{last_byte}");
+        }
         builder = builder
-            .header(http::header::CONTENT_RANGE, HeaderValue::from_str(&format!("bytes {first_byte}-{last_byte}/{filesize}")).unwrap())
+            .header(http::header::CONTENT_RANGE, HeaderValue::from_str(&format!("bytes {first_byte}-{last_byte_str}/{filesize}")).unwrap())
             .status(http::status::StatusCode::PARTIAL_CONTENT);
     }
 
@@ -180,7 +187,9 @@ fn poll_read(cx: &mut task::Context<'_>, stream: &mut ByteStream) -> Poll<Option
 
     let mut buff_read_len = stream.buffer.len();
     if let Some((_, last_byte)) = stream.range {
-        buff_read_len = std::cmp::min(buff_read_len, stream.position.abs_diff(last_byte as u64) as usize)
+        if last_byte != u64::MAX as usize {
+            buff_read_len = std::cmp::min(buff_read_len, (stream.position.abs_diff(last_byte as u64) + 1) as usize)
+        }
     }
     let mut read_buffer = ReadBuf::uninit(&mut stream.buffer[..buff_read_len]);
 
