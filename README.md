@@ -320,7 +320,7 @@ open an issue to be assigned and track the progress there.
   - [ ] Respond with 304 to `If-Modified-Since`
 - [x] Partial Request
   - [x] `Accept-Ranges`
-  - [ ] `Content-Range`
+  - [x] `Content-Range`
   - [ ] `If-Range`
   - [ ] `If-Match`
   - [x] `Range`
