@@ -1,3 +1,4 @@
+use std::io::SeekFrom;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Local, Utc};
 use futures::Stream;
@@ -7,7 +8,8 @@ use hyper::body::Bytes;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::task::{self, Poll};
-use tokio::io::{AsyncRead, ReadBuf};
+use http::HeaderValue;
+use tokio::io::{AsyncRead, AsyncSeekExt, ReadBuf};
 
 use super::file::File;
 
@@ -69,20 +71,25 @@ impl ResponseHeaders {
     pub fn new(
         file: &File,
         cache_control_directive: CacheControlDirective,
+        range: Option<(usize, usize)>
     ) -> Result<ResponseHeaders> {
         let last_modified = file.last_modified()?;
 
         Ok(ResponseHeaders {
             cache_control: cache_control_directive.to_string(),
-            content_length: ResponseHeaders::content_length(file),
+            content_length: ResponseHeaders::content_length(file, range),
             content_type: ResponseHeaders::content_type(file),
             etag: ResponseHeaders::etag(file, &last_modified),
             last_modified: ResponseHeaders::last_modified(&last_modified),
         })
     }
 
-    fn content_length(file: &File) -> u64 {
-        file.size()
+    fn content_length(file: &File, range: Option<(usize, usize)>) -> u64 {
+        if let Some((first_byte, last_byte)) = range {
+            last_byte.abs_diff(first_byte) as u64 + 1
+        } else {
+            file.size()
+        }
     }
 
     fn content_type(file: &File) -> String {
@@ -111,16 +118,25 @@ impl ResponseHeaders {
 pub async fn make_http_file_response(
     file: File,
     cache_control_directive: CacheControlDirective,
+    range: Option<(usize, usize)>
 ) -> Result<hyper::http::Response<Body>> {
-    let headers = ResponseHeaders::new(&file, cache_control_directive)?;
-    let builder = HttpResponseBuilder::new()
+    let filesize = file.size();
+    let headers = ResponseHeaders::new(&file, cache_control_directive, range)?;
+    let mut builder = HttpResponseBuilder::new()
         .header(http::header::CONTENT_LENGTH, headers.content_length)
         .header(http::header::CACHE_CONTROL, headers.cache_control)
         .header(http::header::CONTENT_TYPE, headers.content_type)
         .header(http::header::ETAG, headers.etag)
         .header(http::header::LAST_MODIFIED, headers.last_modified);
 
-    let body = file_bytes_into_http_body(file).await;
+    let body = file_bytes_into_http_body(file, range).await;
+
+    if let Some((first_byte, last_byte)) = range {
+        builder = builder
+            .header(http::header::CONTENT_RANGE, HeaderValue::from_str(&format!("bytes {first_byte}-{last_byte}/{filesize}")).unwrap())
+            .status(http::status::StatusCode::PARTIAL_CONTENT);
+    }
+
     let response = builder
         .body(body)
         .context("Failed to build HTTP File Response")?;
@@ -128,10 +144,18 @@ pub async fn make_http_file_response(
     Ok(response)
 }
 
-pub async fn file_bytes_into_http_body(file: File) -> Body {
+pub async fn file_bytes_into_http_body(mut file: File, range: Option<(usize, usize)>) -> Body {
+    let mut position = 0u64;
+    if let Some((first_byte, _)) = range {
+        position = file.file.seek(SeekFrom::Start(first_byte as u64)).await.unwrap();
+
+    }
+
     let byte_stream = ByteStream {
         file: file.file,
         buffer: Box::new([MaybeUninit::uninit(); FILE_BUFFER_SIZE]),
+        range,
+        position,
     };
 
     Body::wrap_stream(byte_stream)
@@ -140,30 +164,37 @@ pub async fn file_bytes_into_http_body(file: File) -> Body {
 pub struct ByteStream {
     file: tokio::fs::File,
     buffer: FileBuffer,
+    range: Option<(usize, usize)>,
+    position: u64,
 }
 
 impl Stream for ByteStream {
     type Item = Result<Bytes>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
-        let ByteStream {
-            ref mut file,
-            ref mut buffer,
-        } = *self;
-        let mut read_buffer = ReadBuf::uninit(&mut buffer[..]);
+        poll_read(cx, &mut self)
+    }
+}
 
-        match Pin::new(file).poll_read(cx, &mut read_buffer) {
-            Poll::Ready(Ok(())) => {
-                let filled = read_buffer.filled();
+fn poll_read(cx: &mut task::Context<'_>, stream: &mut ByteStream) -> Poll<Option<<ByteStream as futures::Stream>::Item>> {
 
-                if filled.is_empty() {
-                    Poll::Ready(None)
-                } else {
-                    Poll::Ready(Some(Ok(Bytes::copy_from_slice(filled))))
-                }
+    let mut buff_read_len = stream.buffer.len();
+    if let Some((_, last_byte)) = stream.range {
+        buff_read_len = std::cmp::min(buff_read_len, stream.position.abs_diff(last_byte as u64) as usize)
+    }
+    let mut read_buffer = ReadBuf::uninit(&mut stream.buffer[..buff_read_len]);
+
+    match Pin::new(&mut stream.file).poll_read(cx, &mut read_buffer) {
+        Poll::Ready(Ok(())) => {
+            let filled = read_buffer.filled();
+            stream.position += filled.len() as u64;
+            if filled.is_empty() {
+                Poll::Ready(None)
+            } else {
+                Poll::Ready(Some(Ok(Bytes::copy_from_slice(filled))))
             }
-            Poll::Ready(Err(error)) => Poll::Ready(Some(Err(error.into()))),
-            Poll::Pending => Poll::Pending,
         }
+        Poll::Ready(Err(error)) => Poll::Ready(Some(Err(error.into()))),
+        Poll::Pending => Poll::Pending,
     }
 }

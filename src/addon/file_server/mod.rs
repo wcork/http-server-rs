@@ -103,7 +103,7 @@ impl<'a> FileServer {
     ///
     /// If the matched path resolves to a file, attempts to render it if the
     /// MIME type is supported, otherwise returns the binary (downloadable file)
-    pub async fn resolve(&self, req_path: String) -> Result<Response<Body>> {
+    pub async fn resolve(&self, req_path: String, range: Option<(usize, usize)>) -> Result<Response<Body>> {
         use std::io::ErrorKind;
 
         let (path, query_params) = FileServer::parse_path(req_path.as_str())?;
@@ -114,7 +114,7 @@ impl<'a> FileServer {
                     self.render_directory_index(dir.path(), query_params).await
                 }
                 Entry::File(file) => {
-                    make_http_file_response(*file, CacheControlDirective::MaxAge(2500)).await
+                    make_http_file_response(*file, CacheControlDirective::MaxAge(2500), range).await
                 }
             },
             Err(err) => match err.kind() {
