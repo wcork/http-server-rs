@@ -318,12 +318,12 @@ open an issue to be assigned and track the progress there.
 - [ ] Cache Control
   - [ ] `Last-Modified` and `ETag`
   - [ ] Respond with 304 to `If-Modified-Since`
-- [ ] Partial Request
-  - [ ] `Accept-Ranges`
+- [x] Partial Request
+  - [x] `Accept-Ranges`
   - [ ] `Content-Range`
   - [ ] `If-Range`
   - [ ] `If-Match`
-  - [ ] `Range`
+  - [x] `Range`
 - [x] Standalone Builds
   - [x] macOS
   - [x] Linux
