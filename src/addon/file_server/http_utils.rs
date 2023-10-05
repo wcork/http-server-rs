@@ -135,7 +135,8 @@ pub async fn make_http_file_response(
     let body = file_bytes_into_http_body(file, range).await;
 
     if let Some((first_byte, last_byte)) = range {
-        let mut last_byte_str = format!("{filesize}");
+        let ending_byte = filesize-1;
+        let mut last_byte_str = format!("{ending_byte}");
         if last_byte != u64::MAX as usize {
             last_byte_str = format!("{last_byte}");
         }
