@@ -272,6 +272,7 @@ mod tests {
                 "Content-Type".to_string(),
                 "Origin".to_string(),
                 "Content-Length".to_string(),
+                "Range".to_string(),
             ])
             .build();
 
@@ -294,6 +295,7 @@ mod tests {
                 String::from("Content-Type"),
                 String::from("Origin"),
                 String::from("Content-Length"),
+                String::from("Range"),
             ])
         );
         assert_eq!(cors_config.allow_credentials, false);

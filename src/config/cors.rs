@@ -28,6 +28,7 @@ impl CorsConfig {
                 "Origin".to_string(),
                 "Content-Length".to_string(),
                 "Content-Type".to_string(),
+                "Range".to_string(),
             ]),
             allow_credentials: false,
             max_age: Some(43200),
